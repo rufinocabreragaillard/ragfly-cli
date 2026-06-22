@@ -1,0 +1,14 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# Envs
+.venv/
+venv/
+.env
+
+# OS
+.DS_Store
