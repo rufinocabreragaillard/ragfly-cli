@@ -1,24 +1,27 @@
 """
-CLI principal de RAGfly — Cliente local y Cloud.
+CLI principal de RAGfly — paquete `ragfly-cli` (el binario `ragfly`).
 
-Comandos locales:
+Comandos:
   ragfly version       — Versión del cliente
-  ragfly estado        — Estado de la BD local
-  ragfly setup         — Configuración inicial
-  ragfly escanear      — Escanear directorio de documentos
-  ragfly procesar      — Procesar documentos (CHUNKEAR; el cloud vectoriza)
-  ragfly sync          — Sincronizar con el cloud
-  ragfly api           — API local para integración
-  ragfly gui           — Interfaz gráfica nativa (PySide6)
-
-Comandos cloud:
   ragfly login         — Autenticar contra el cloud
   ragfly logout        — Cerrar sesión
   ragfly cloud me      — Ver contexto activo
+  ragfly cloud grupo     listar/cambiar/limpiar
+  ragfly cloud api-key   crear/listar/revocar
   ragfly cloud documento listar/ver
-  ragfly cloud espacio  listar/ver
-  ragfly cloud cola     ver/ejecuciones
+  ragfly cloud espacio   listar/ver
+  ragfly cloud cola      ver/ejecuciones
   ragfly cloud habilidad listar/ver/ejecutar
+  ragfly cloud catalogo
+  ragfly cloud buscar
+  ragfly cloud chat      preguntar
+
+Las operaciones de filesystem local (`ragfly local scan/sync/daemon`) NO viven
+en este paquete: vienen con RAGfly Desktop.
+
+Flags globales: `-o {tabla,json,csv,id}` (según comando) y `-v/--verbose`
+(método+URL+status de cada request, a stderr). `-v` va antes del subcomando:
+`ragfly -v cloud documento listar`.
 """
 
 import json
@@ -30,11 +33,37 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-from . import __version__
+from . import __version__, _runtime
 from ._http import default_headers
 
 console = Console()
 err_console = Console(stderr=True)
+
+
+# ── Salida cruda a stdout (pipe-safe) ────────────────────────────────────────
+# Rich (`console.print`) interpreta `[...]` como markup y hace soft-wrap al ancho
+# de la terminal: ambos rompen el JSON/CSV cuando se pipea a `jq` u otra tool.
+# Para datos legibles por máquina escribimos directo a stdout con click.echo.
+
+def _emit_json(obj) -> None:
+    """Imprime JSON crudo a stdout, sin pasar por Rich. Seguro para `| jq`."""
+    click.echo(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
+
+
+def _emit_ids(items, *keys: str) -> None:
+    """Imprime un id por línea (el primer `key` presente en cada item). Para
+    `-o id` en pipes. Acepta un dict suelto (un solo recurso) o una lista."""
+    if isinstance(items, dict):
+        items = [items]
+    for it in items or []:
+        if not isinstance(it, dict):
+            click.echo(str(it))
+            continue
+        for k in keys:
+            val = it.get(k)
+            if val not in (None, ""):
+                click.echo(str(val))
+                break
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -42,9 +71,12 @@ err_console = Console(stderr=True)
 # ════════════════════════════════════════════════════════════════════════════
 
 @click.group()
-def app():
-    """RAGfly — Cliente local y Cloud."""
-    pass
+@click.option("-v", "--verbose", is_flag=True,
+              help="Muestra método+URL+status de cada request (a stderr).")
+def app(verbose: bool):
+    """RAGfly — paquete `ragfly-cli` (binario `ragfly`)."""
+    if verbose:
+        _runtime.set_verbose(True)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -129,7 +161,7 @@ def cloud_me(output: str):
     data = cmd.protegido(cloud_get, "/auth/me")
 
     if output == "json":
-        console.print(json.dumps(data, indent=2, ensure_ascii=False))
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False))
         return
 
     console.print()
@@ -173,7 +205,7 @@ def cloud_grupo_listar(output: str):
     activo = get_grupo_activo_local()
 
     if output == "json":
-        console.print(json.dumps({"activo": activo, "grupos": grupos}, indent=2, ensure_ascii=False))
+        click.echo(json.dumps({"activo": activo, "grupos": grupos}, indent=2, ensure_ascii=False))
         return
 
     console.print()
@@ -267,7 +299,7 @@ def cloud_api_key_crear(nombre: str, rol: str | None, area: str | None, usuario_
     data = cmd.protegido(cloud_post, "/auth/api-key", body)
 
     if output == "json":
-        console.print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False, default=str))
         return
 
     console.print()
@@ -294,7 +326,7 @@ def cloud_api_key_listar(output: str):
     items = data if isinstance(data, list) else data.get("items", [])
 
     if output == "json":
-        console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(items, indent=2, ensure_ascii=False, default=str))
         return
 
     console.print()
@@ -350,15 +382,18 @@ def cloud_documento():
 @click.option("--estado", default=None, help="Filtrar por estado (ej. VECTORIZADO)")
 @click.option("--limite", default=20, show_default=True)
 @click.option("--pagina", default=1, show_default=True)
-@click.option("-o", "--output", type=click.Choice(["tabla", "json", "csv"]), default="tabla")
+@click.option("-o", "--output", type=click.Choice(["tabla", "json", "csv", "id"]), default="tabla")
 def cloud_documento_listar(estado: str | None, limite: int, pagina: int, output: str):
     """Listar documentos del grupo activo."""
     from .cloud_commands import cloud_get
     from .oop import CliCommand
 
-    params: dict = {"limite": limite, "pagina": pagina}
+    # El backend (GET /documentos/paginado) espera limit/page/codigo_estado_doc.
+    # FastAPI ignora silenciosamente los params desconocidos, así que enviar
+    # limite/pagina/estado se traducía en "sin filtro, 50 por defecto".
+    params: dict = {"limit": limite, "page": pagina}
     if estado:
-        params["estado"] = estado
+        params["codigo_estado_doc"] = estado
 
     cmd = CliCommand()
     data = cmd.protegido(cloud_get, "/documentos/paginado", params=params)
@@ -366,13 +401,17 @@ def cloud_documento_listar(estado: str | None, limite: int, pagina: int, output:
     items = data.get("items", data) if isinstance(data, dict) else data
 
     if output == "json":
-        console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
+        _emit_json(items)
+        return
+
+    if output == "id":
+        _emit_ids(items, "codigo_documento")
         return
 
     if output == "csv":
-        console.print("codigo,nombre,estado,ubicacion")
+        click.echo("codigo,nombre,estado,ubicacion")
         for d in items:
-            console.print(
+            click.echo(
                 f"{d.get('codigo_documento','')},{d.get('nombre_documento','')}"
                 f",{d.get('codigo_estado_doc','')},{d.get('nombre_ubicacion','')}"
             )
@@ -417,7 +456,7 @@ def cloud_documento_ver(codigo: str, output: str):
     data = cmd.protegido(cloud_get, f"/documentos/{codigo}")
 
     if output == "json":
-        console.print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False, default=str))
         return
 
     console.print()
@@ -449,19 +488,23 @@ def cloud_espacio():
 
 @cloud_espacio.command("listar")
 @click.option("--limite", default=20, show_default=True)
-@click.option("-o", "--output", type=click.Choice(["tabla", "json"]), default="tabla")
+@click.option("-o", "--output", type=click.Choice(["tabla", "json", "id"]), default="tabla")
 def cloud_espacio_listar(limite: int, output: str):
     """Listar Espacios de Trabajo del grupo activo."""
     from .cloud_commands import cloud_get
     from .oop import CliCommand
 
     cmd = CliCommand()
-    data = cmd.protegido(cloud_get, "/espacios-trabajo/paginado", params={"limite": limite})
+    data = cmd.protegido(cloud_get, "/espacios-trabajo/paginado", params={"limit": limite})
 
     items = data.get("items", data) if isinstance(data, dict) else data
 
     if output == "json":
-        console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
+        _emit_json(items)
+        return
+
+    if output == "id":
+        _emit_ids(items, "id_espacio")
         return
 
     console.print()
@@ -495,7 +538,7 @@ def cloud_espacio_ver(id_espacio: int, limite: int, output: str):
 
     cmd = CliCommand()
     # No hay GET /{id} suelto — buscamos en paginado y filtramos
-    espacios_data = cmd.protegido(cloud_get, "/espacios-trabajo/paginado", params={"limite": 200})
+    espacios_data = cmd.protegido(cloud_get, "/espacios-trabajo/paginado", params={"limit": 200})
     items_esp = espacios_data.get("items", espacios_data) if isinstance(espacios_data, dict) else espacios_data
     espacio = next((e for e in items_esp if e.get("id_espacio") == id_espacio), None)
     if not espacio:
@@ -503,12 +546,11 @@ def cloud_espacio_ver(id_espacio: int, limite: int, output: str):
     docs_data = cmd.protegido(
         cloud_get,
         f"/espacios-trabajo/{id_espacio}/documentos/paginado",
-        params={"limite": limite},
+        params={"limit": limite},
     )
 
     if output == "json":
-        console.print(json.dumps({"espacio": espacio, "documentos": docs_data},
-                                 indent=2, ensure_ascii=False, default=str))
+        _emit_json({"espacio": espacio, "documentos": docs_data})
         return
 
     console.print()
@@ -558,11 +600,13 @@ def cloud_cola_ver(proceso: str | None, estado: str | None, limite: int, output:
     from .cloud_commands import cloud_get
     from .oop import CliCommand
 
-    params: dict = {"limite": limite}
-    if proceso:
-        params["proceso"] = proceso
+    # Backend GET /cola-estados-docs/paginado → page/limit/estado_cola/q.
+    params: dict = {"limit": limite}
     if estado:
-        params["estado"] = estado
+        params["estado_cola"] = estado
+    if proceso:
+        # El paginado no filtra por proceso; lo usamos como búsqueda libre (q).
+        params["q"] = proceso
 
     cmd = CliCommand()
     data = cmd.protegido(cloud_get, "/cola-estados-docs/paginado", params=params)
@@ -570,7 +614,7 @@ def cloud_cola_ver(proceso: str | None, estado: str | None, limite: int, output:
     items = data.get("items", data) if isinstance(data, dict) else data
 
     if output == "json":
-        console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(items, indent=2, ensure_ascii=False, default=str))
         return
 
     console.print()
@@ -613,12 +657,12 @@ def cloud_cola_ejecuciones(limite: int, output: str):
     from .oop import CliCommand
 
     cmd = CliCommand()
-    data = cmd.protegido(cloud_get, "/cola-estados-docs/ejecuciones", params={"limite": limite})
+    data = cmd.protegido(cloud_get, "/cola-estados-docs/ejecuciones", params={"limit": limite})
 
     items = data.get("items", data) if isinstance(data, dict) else data
 
     if output == "json":
-        console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(items, indent=2, ensure_ascii=False, default=str))
         return
 
     console.print()
@@ -656,7 +700,7 @@ def cloud_habilidad():
 
 
 @cloud_habilidad.command("listar")
-@click.option("-o", "--output", type=click.Choice(["tabla", "json"]), default="tabla")
+@click.option("-o", "--output", type=click.Choice(["tabla", "json", "id"]), default="tabla")
 def cloud_habilidad_listar(output: str):
     """Listar todas las habilidades disponibles."""
     from .cloud_commands import cloud_get
@@ -666,7 +710,11 @@ def cloud_habilidad_listar(output: str):
     items = cmd.protegido(cloud_get, "/habilidades")
 
     if output == "json":
-        console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
+        _emit_json(items)
+        return
+
+    if output == "id":
+        _emit_ids(items, "codigo_habilidad")
         return
 
     console.print()
@@ -701,7 +749,7 @@ def cloud_habilidad_ver(codigo: str, output: str):
     h = cmd.protegido(cloud_get, f"/habilidades/{codigo}")
 
     if output == "json":
-        console.print(json.dumps(h, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(h, indent=2, ensure_ascii=False, default=str))
         return
 
     console.print()
@@ -755,7 +803,7 @@ def cloud_habilidad_ejecutar(
     resultado = cmd.protegido(cloud_post, f"/habilidades/{codigo}/ejecutar", body=body)
 
     if output == "json":
-        console.print(json.dumps(resultado, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(resultado, indent=2, ensure_ascii=False, default=str))
         return
 
     # Contrato uniforme (SobreEjecucion): codigo_proceso + detalle.n_items_cola.
@@ -801,7 +849,7 @@ def cloud_catalogo(tipo: str, output: str):
     data = cmd.protegido(cloud_get, "/catalogo", params={"tipo": tipo})
 
     if output == "json":
-        console.print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False, default=str))
         return
 
     funciones = data.get("funciones", [])
@@ -881,7 +929,7 @@ def cloud_buscar(
     data = cmd.protegido(cloud_post, "/documentos/buscar-semantico", body=body)
 
     if output == "json":
-        console.print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False, default=str))
         return
 
     items = data.get("resultados") or data.get("items") or data if isinstance(data, list) else (
@@ -981,7 +1029,7 @@ def cloud_chat_preguntar(
         raise CloudError(f"No se pudo conectar al servidor: {e}", exit_code=2)
 
     if output == "json":
-        console.print(json.dumps({
+        click.echo(json.dumps({
             "id_conversacion": id_conversacion,
             "respuesta": "".join(partes),
             **meta,

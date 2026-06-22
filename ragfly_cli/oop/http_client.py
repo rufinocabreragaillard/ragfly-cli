@@ -20,9 +20,12 @@ Ejemplo:
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Optional
 
 import httpx
+
+from ragfly_cli import _runtime
 
 # Import diferido para evitar ciclo
 from ragfly_cli.cloud_commands import (
@@ -75,7 +78,17 @@ class CloudHttpClient:
             if is_write and method != "DELETE":
                 kwargs["json"] = body or {}
 
-            r = httpx.request(method, f"{self.url}{path}", **kwargs)
+            url_full = f"{self.url}{path}"
+            if _runtime.VERBOSE:
+                qs = httpx.QueryParams(params or {})
+                sufijo = f"?{qs}" if str(qs) else ""
+                print(f"→ {method} {url_full}{sufijo}", file=sys.stderr)
+
+            r = httpx.request(method, url_full, **kwargs)
+
+            if _runtime.VERBOSE:
+                print(f"← {r.status_code} {r.reason_phrase}", file=sys.stderr)
+
             r.raise_for_status()
             if r.status_code == 204 or not r.content:
                 return None
