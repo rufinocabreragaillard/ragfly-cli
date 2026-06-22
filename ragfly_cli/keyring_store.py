@@ -19,6 +19,14 @@ SERVICE = "ragfly-ragflydesktop"
 KEY_TOKEN = "jwt"
 KEY_EMAIL = "email"
 
+
+class KeyringStoreError(Exception):
+    """El keyring del SO no está disponible o falló al guardar la sesión.
+
+    Típico en entornos headless/CI (sin Keychain/libsecret). El llamador debe
+    capturarlo y sugerir el flujo por `RAGFLY_TOKEN`.
+    """
+
 # Cache en RAM por sesión del proceso. Evita re-leer el Keychain en cada
 # llamada (cada lectura dispara un prompt del llavero cuando la app está
 # firmada ad-hoc, como en builds de desarrollo). Se lee una sola vez y se
@@ -30,9 +38,22 @@ _cache_email: object | str | None = _NO_LEIDO
 
 
 def guardar(token: str, email: str) -> None:
+    """Persiste JWT+email en el keyring del SO.
+
+    Lanza `KeyringStoreError` si el keyring no está disponible (headless/CI) o
+    falla, sin dejar sesión parcial.
+    """
     global _cache_token, _cache_email
-    keyring.set_password(SERVICE, KEY_TOKEN, token)
-    keyring.set_password(SERVICE, KEY_EMAIL, email)
+    try:
+        keyring.set_password(SERVICE, KEY_TOKEN, token)
+        keyring.set_password(SERVICE, KEY_EMAIL, email)
+    except Exception as e:  # KeyringError y backends sin llavero (NoKeyringError, etc.)
+        # Rollback best-effort para no dejar sesión parcial (token sin email).
+        try:
+            keyring.delete_password(SERVICE, KEY_TOKEN)
+        except Exception:
+            pass
+        raise KeyringStoreError(str(e)) from e
     _cache_token = token
     _cache_email = email
 

@@ -211,5 +211,16 @@ def login(email: str, password: str) -> dict:
         raise CloudError("El servidor no retornó un token.", exit_code=2)
 
     expires_in = data.get("expires_in", 3600)
-    guardar_credenciales(token, email, expires_in)
+    try:
+        guardar_credenciales(token, email, expires_in)
+    except keyring_store.KeyringStoreError:
+        raise CloudError(
+            "Login correcto, pero no se pudo guardar la sesión: el keyring del "
+            "SO no está disponible (típico en headless/CI).\n"
+            "  Para entornos sin llavero usá una API key de larga duración:\n"
+            "    export RAGFLY_TOKEN=slm_live_...\n"
+            "  (creala con `ragfly cloud api-key crear --nombre ci`, o desde la "
+            "web). El login interactivo requiere una terminal con keyring.",
+            exit_code=1,
+        )
     return data
