@@ -1,0 +1,42 @@
+name: release
+
+# Publica ragfly-cli a PyPI al pushear un tag vX.Y.Z.
+# Forma canónica de release:
+#   1. subir version en pyproject.toml + ragfly_cli/__init__.py
+#   2. commit + push
+#   3. git tag vX.Y.Z && git push origin vX.Y.Z
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verificar que el tag coincide con la versión del paquete
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag=$TAG  pyproject=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::El tag v$TAG no coincide con la versión $PKG de pyproject.toml"
+            exit 1
+          fi
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
