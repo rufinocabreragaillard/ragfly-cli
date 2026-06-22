@@ -155,6 +155,20 @@ def cloud_post(
     return CloudHttpClient(timeout_write=timeout).post(path, body=body, params=params, token=token)
 
 
+def cloud_delete(
+    path: str,
+    params: dict | None = None,
+    token: str | None = None,
+    timeout: int = 30,
+) -> Any:
+    """DELETE autenticado contra CLOUD_URL/path. Retorna JSON parseado.
+
+    Wrapper retrocompatible sobre `CloudHttpClient` (ragfly_cli.oop).
+    """
+    from ragfly_cli.oop import CloudHttpClient
+    return CloudHttpClient().delete(path, params=params, token=token, timeout=timeout)
+
+
 def _manejar_http_error(e: httpx.HTTPStatusError) -> None:
     status = e.response.status_code
     try:

@@ -34,6 +34,7 @@ ragfly
 └── cloud                    ← operations against api.ragfly.ai
     ├── me
     ├── grupo       listar | cambiar | limpiar
+    ├── api-key     crear | listar | revocar
     ├── documento   listar | ver
     ├── espacio     listar | ver
     ├── cola        ver | ejecuciones

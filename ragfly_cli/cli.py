@@ -236,6 +236,108 @@ def cloud_grupo_limpiar():
     console.print("  El cliente usará el grupo por defecto del usuario en la próxima request.")
 
 
+# ── cloud api-key ─────────────────────────────────────────────────────────────
+
+@cloud.group("api-key")
+def cloud_api_key():
+    """Gestionar API Keys de larga duración (CI / automatización, sin expiración)."""
+    pass
+
+
+@cloud_api_key.command("crear")
+@click.option("--nombre", required=True, help="Nombre descriptivo de la key (ej. pipeline-ci)")
+@click.option("--rol", default=None, help="Rol solicitado (ej. DOC-ADMIN, DOCS-USUARIO-FINAL). Por defecto: rol principal del dueño")
+@click.option("--area", default=None, help="Acotar la key a un subárbol de área (por defecto hereda la del usuario)")
+@click.option("--usuario-destino", default=None, help="(admin) crear la key para otro usuario del grupo")
+@click.option("-o", "--output", type=click.Choice(["texto", "json"]), default="texto")
+def cloud_api_key_crear(nombre: str, rol: str | None, area: str | None, usuario_destino: str | None, output: str):
+    """Crear una API Key. El secreto se muestra UNA sola vez."""
+    from .cloud_commands import cloud_post
+    from .oop import CliCommand
+
+    body: dict = {"nombre": nombre}
+    if rol:
+        body["rol_solicitado"] = rol
+    if area:
+        body["codigo_area"] = area
+    if usuario_destino:
+        body["codigo_usuario_destino"] = usuario_destino
+
+    cmd = CliCommand()
+    data = cmd.protegido(cloud_post, "/auth/api-key", body)
+
+    if output == "json":
+        console.print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        return
+
+    console.print()
+    console.print(f"[green]✓ API Key creada:[/green] [bold]{data.get('nombre')}[/bold]")
+    console.print(Panel(
+        f"[bold yellow]{data.get('api_key')}[/bold yellow]",
+        title="Guardala AHORA — no se vuelve a mostrar",
+        border_style="yellow",
+    ))
+    console.print(f"  Prefijo: [dim]{data.get('prefijo')}[/dim]   Rol: {data.get('codigo_rol') or '—'}   Grupo: {data.get('codigo_grupo')}")
+    console.print(f"  Uso:  [dim]export RAGFLY_TOKEN={data.get('api_key')}[/dim]")
+    console.print()
+
+
+@cloud_api_key.command("listar")
+@click.option("-o", "--output", type=click.Choice(["tabla", "json"]), default="tabla")
+def cloud_api_key_listar(output: str):
+    """Listar las API Keys del usuario (sin el secreto, solo prefijo)."""
+    from .cloud_commands import cloud_get
+    from .oop import CliCommand
+
+    cmd = CliCommand()
+    data = cmd.protegido(cloud_get, "/auth/api-key")
+    items = data if isinstance(data, list) else data.get("items", [])
+
+    if output == "json":
+        console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
+        return
+
+    console.print()
+    if not items:
+        console.print("[yellow]No tenés API Keys.[/yellow] Creá una con `ragfly cloud api-key crear --nombre ...`.")
+        return
+
+    t = Table(title="API Keys", border_style="dim")
+    t.add_column("Prefijo", style="bold")
+    t.add_column("Nombre")
+    t.add_column("Rol", style="dim")
+    t.add_column("Área", style="dim")
+    t.add_column("Creada")
+    t.add_column("Último uso")
+    t.add_column("Estado")
+    for k in items:
+        revocada = k.get("revocada_en")
+        estado = "[red]revocada[/red]" if revocada else "[green]activa[/green]"
+        t.add_row(
+            k.get("prefijo") or "—",
+            k.get("nombre") or "—",
+            k.get("codigo_rol") or "—",
+            k.get("codigo_area") or "—",
+            (k.get("creada_en") or "—")[:10],
+            (k.get("ultimo_uso") or "—")[:10],
+            estado,
+        )
+    console.print(t)
+    console.print()
+
+
+@cloud_api_key.command("revocar")
+@click.argument("prefijo")
+def cloud_api_key_revocar(prefijo: str):
+    """Revocar una API Key por su prefijo (deja de autenticar de inmediato)."""
+    from .cloud_commands import cloud_delete
+    from .oop import CliCommand
+
+    cmd = CliCommand()
+    cmd.protegido(cloud_delete, f"/auth/api-key/{prefijo}")
+    console.print(f"[green]✓ API Key revocada:[/green] [bold]{prefijo}[/bold]")
+
+
 # ── cloud documento ──────────────────────────────────────────────────────────
 
 @cloud.group("documento")
