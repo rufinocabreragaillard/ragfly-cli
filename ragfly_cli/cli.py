@@ -1005,6 +1005,7 @@ def cloud_chat_preguntar(
                 raise SystemExit(2)
             partes: list[str] = []
             meta: dict = {}
+            recibio_done = False
             for raw in r.iter_lines():
                 if not raw or not raw.startswith("data:"):
                     continue
@@ -1022,11 +1023,24 @@ def cloud_chat_preguntar(
                         console.print(chunk, end="", soft_wrap=True)
                 elif "done" in evt:
                     meta = {k: v for k, v in evt.items() if k != "done"}
+                    recibio_done = True
                 elif "error" in evt:
                     err_console.print(f"\n[red]Error del servidor: {evt['error']}[/red]")
                     raise SystemExit(2)
     except httpx.RequestError as e:
-        raise CloudError(f"No se pudo conectar al servidor: {e}", exit_code=2)
+        # Corte/timeout de conexión: error limpio a stderr + exit != 0, no un
+        # traceback crudo (este bloque está fuera de CliCommand.protegido).
+        err_console.print(f"\n[red]No se pudo conectar al servidor: {e}[/red]")
+        raise SystemExit(2)
+
+    # El stream cerró sin el evento `done` final: respuesta truncada. Salir con
+    # error en vez de imprimir la respuesta parcial como si fuera completa.
+    if not recibio_done:
+        err_console.print(
+            "\n[red]El stream se cortó antes de terminar (sin evento 'done'); "
+            "respuesta incompleta.[/red]"
+        )
+        raise SystemExit(2)
 
     if output == "json":
         click.echo(json.dumps({
