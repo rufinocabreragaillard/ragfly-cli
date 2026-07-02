@@ -26,6 +26,25 @@ ragfly login
 export RAGFLY_TOKEN=slm_live_xxxxxxxxxx
 ```
 
+## `RAGFLY_ROOT` (optional) — open original files on disk
+
+Searching, asking and citing need zero extra config. Only if a script or agent
+on this machine must open the **original file** on disk, set `RAGFLY_ROOT` once:
+it is the **parent folder** of the folder you selected when uploading your
+documents via the web app. RAGfly never reads it nor stores your absolute
+path — documents uploaded via browser carry a *relative* `ruta_archivo`, and
+the real path is `$RAGFLY_ROOT + ruta_archivo`.
+
+```bash
+# Example: you uploaded /Users/ana/Dropbox/MisDocumentos → the PARENT is the root
+echo 'export RAGFLY_ROOT="/Users/ana/Dropbox"' >> ~/.zshrc
+# "/MisDocumentos/letras/cancion.txt" → /Users/ana/Dropbox/MisDocumentos/letras/cancion.txt
+```
+
+Not needed for documents loaded via RAGfly Desktop (their paths are already
+absolute). Step-by-step walkthrough:
+<https://ragfly.ai/build/mcp#setting-up-ragfly_root--once-per-machine-in-3-steps>
+
 ## Command surface
 
 ```
