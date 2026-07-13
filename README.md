@@ -23,7 +23,7 @@ ragfly cloud me
 ragfly login
 
 # Non-interactive / CI (API key, no expiry)
-export RAGFLY_TOKEN=slm_live_xxxxxxxxxx
+export RAGFLY_API_KEY=slm_live_xxxxxxxxxx
 ```
 
 ## `RAGFLY_ROOT` (optional) — open original files on disk
@@ -52,15 +52,28 @@ ragfly
 ├── login / logout / version
 └── cloud                    ← operations against api.ragfly.ai
     ├── me
-    ├── grupo       listar | cambiar | limpiar
-    ├── api-key     crear | listar | revocar
-    ├── documento   listar | ver
-    ├── espacio     listar | ver
-    ├── cola        ver | ejecuciones
-    ├── habilidad   listar | ver | ejecutar
-    ├── catalogo
-    ├── buscar
-    └── chat        preguntar
+    ├── group       list | switch | clear
+    ├── api-key     create | list | revoke
+    ├── document    list | show | edges
+    ├── space       list | show
+    ├── queue       show | runs
+    ├── skill       list | show | run
+    ├── catalog
+    ├── search
+    └── chat        ask
+```
+
+Codes are English on the wire: filter and read catalog codes in English
+(`--status VECTORIZED`, `codigo_estado_doc: VECTORIZED`, skill code `SUMMARIZE_DOCUMENT`).
+The CLI translates them to RAGfly's internal codes at its edge, using the same
+public-code map as the MCP server (`GET /catalogo/public-codes`). The former
+Spanish command/flag names (`documento listar`, `--estado`) still work as
+compatibility aliases.
+
+```bash
+ragfly cloud document list --status VECTORIZED --limit 20
+ragfly cloud skill run SUMMARIZE_DOCUMENT --space 12
+ragfly cloud search "Q1 revenue"
 ```
 
 Full reference: <https://api.ragfly.ai/docs> and `docs/integradores/CLI.md`.
